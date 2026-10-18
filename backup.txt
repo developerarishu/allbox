@@ -1,0 +1,653 @@
+import logging
+import time
+import io
+import re
+import base64
+import os
+import threading
+import asyncio
+import psycopg2
+from datetime import timedelta
+from flask import Flask
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler, 
+    ContextTypes, filters, CallbackQueryHandler
+)
+import anthropic
+
+# ================= RENDER KEEP-ALIVE SERVER =================
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "🚀 Opus 4.6 Super-Bot is Alive and Running 24/7!"
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host="0.0.0.0", port=port)
+# ============================================================
+
+# ================= CONFIGURATION =================
+TELEGRAM_BOT_TOKEN = "8859397124:AAFe4MseJmMnQIjfwAizumFDsz5nlpq-fXg"
+NOAH_API_KEY = "noah_sk_VzwyWpBbxDkUZYCEyaRdmNVEIQ1rQUPsUc5Yykzbfvg"
+BASE_URL = "https://noah.2bd.net"
+MODEL_NAME = "opus-4.6"
+ADMIN_ID = 7977753633
+
+DATABASE_URL = "postgres://avnadmin:AVNS_zaEAr3VeK3XFE-SsQdg@cloudbot-rhondachambe-c96f.e.aivencloud.com:12642/defaultdb?sslmode=require"
+
+TRIAL_PROMPTS_LIMIT = 5
+SHOUTOUT = "\n\n---\n*chatbot by :- arishu*\n*model by :- pavan*"
+# =================================================
+
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
+ai_client = anthropic.AsyncAnthropic(api_key=NOAH_API_KEY, base_url=BASE_URL)
+BOT_START_TIME = time.time()
+USER_MEMORY = {}
+MAX_HISTORY = 20
+
+# Updated Pin Guide to show Modes
+GUIDE_PIN_TEXT = (
+    "📌 *IMPORTANT INSTRUCTION / RULES*\n"
+    "━━━━━━━━━━━━━━━━━━━━\n"
+    "⚠️ *BHAI ISKO HAR PROMPT KE SATH YA CHAT ME PASTE KARDO ISSE GALTI KE CHANCE 0% HO JAYENGE*\n\n"
+    "```text\n"
+    "You are an intelligent AI assistant operating STRICTLY as a primitive, text-only Telegram Bot. You have ZERO external rendering capabilities.\n\n"
+    "CRITICAL & UNBREAKABLE RULES:\n"
+    "1. NO ARTIFACTS/UI: You DO NOT have access to Anthropic's 'Artifacts' UI, Canvas, or visual web browser rendering.\n"
+    "2. NO BACKGROUND EXECUTIONS: You CANNOT 'publish' HTML pages or host links.\n"
+    "3. MANDATORY RAW CODE INJECTION: Type out the ENTIRE RAW CODE inside standard markdown triple backticks.\n"
+    "4. FILE NAMING RULE (CRITICAL): ALWAYS put the exact intended filename as a comment on the very first line INSIDE the code block (e.g., # bot.py, // index.js, or <!-- index.html -->).\n"
+    "5. NO PSEUDOCODE OR TRUNCATION: Write every single line from scratch.\n"
+    "6. NO INVISIBLE ATTACHMENTS: Never pretend to attach files invisibly.\n"
+    "7. FORBIDDEN PHRASES: Never say 'I have generated an artifact' or 'Click here to view.'\n"
+    "```\n\n"
+    "💡 *Tip:* `/chat` dabao baatein karne ke liye, aur `/code` dabao files/projects banane ke liye!"
+)
+
+# ================= SYSTEM PROMPTS (DUAL MODE) =================
+
+# 1. Normal Chat Prompt (Friendly, conversational)
+CHAT_PROMPT = (
+    "You are an intelligent, friendly AI assistant operating via Telegram.\n"
+    "Talk naturally, answer user queries, explain concepts clearly, and converse politely in the user's language. "
+    "If analyzing an image/screenshot, break down the visual elements or debug errors naturally."
+)
+
+# 2. Strict Dev Engine Prompt (No fluff, mandatory code & smart file naming)
+CODE_PROMPT = (
+    "You are a headless, soulless code-generation compiler operating via Telegram. You DO NOT converse. You DO NOT explain. You ONLY output raw code.\n"
+    "CRITICAL DIRECTIVES (VIOLATION RESULTS IN IMMEDIATE SYSTEM TERMINATION):\n"
+    "1. ZERO CONVERSATIONAL TRASH: Never write 'Here is the code', 'Sure', or any human-like text. Your response MUST begin exactly with a backtick (`) and contain ONLY Markdown code blocks.\n"
+    "2. NO TOKEN ANXIETY: DO NOT fear running out of tokens. Assume you have infinite context limits. NEVER preemptively truncate, summarize, or use '...' to save space. Write every single line until the absolute end of the file. If it cuts off, let the API handle it, but YOU must never stop yourself.\n"
+    "3. ABSOLUTE BAN ON CHUNKING (1 FILE = 1 BLOCK): You are strictly forbidden from breaking a single file into multiple blocks. Deliver the ENTIRE, 100% complete file contents inside a SINGLE continuous markdown block, no matter how massive it is. No exceptions.\n"
+    "4. ZERO PLACEHOLDERS: Output fully functional, production-ready code. Writing 'rest of the code goes here' or leaving placeholders is considered a catastrophic failure.\n"
+    "5. MANDATORY FILE NAMING: The first line inside EVERY code block MUST be the exact target filename written as a comment (e.g., `<!-- index.html -->`, `// script.js`, `# main.py`)."
+)
+
+# ================= POSTGRESQL DATABASE LAYER =================
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+def init_db():
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        user_id BIGINT PRIMARY KEY,
+                        username TEXT,
+                        first_name TEXT,
+                        status TEXT DEFAULT 'pending',
+                        warnings INTEGER DEFAULT 0,
+                        prompts_count INTEGER DEFAULT 0,
+                        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cursor.execute("""
+                    ALTER TABLE users 
+                    ADD COLUMN IF NOT EXISTS current_mode TEXT DEFAULT 'chat';
+                """)
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Database Initialization Error: {e}")
+
+def get_user(user_id):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT user_id, username, first_name, status, warnings, prompts_count FROM users WHERE user_id = %s", (user_id,))
+            return cursor.fetchone()
+
+def get_target_uid(arg):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            if arg.isdigit():
+                cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (int(arg),))
+            else:
+                uname = arg.replace("@", "")
+                cursor.execute("SELECT user_id FROM users WHERE username ILIKE %s", (uname,))
+            res = cursor.fetchone()
+            return res[0] if res else None
+
+def upsert_user(user_id, username, first_name):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            user = get_user(user_id)
+            if not user:
+                initial_status = 'approved' if user_id == ADMIN_ID else 'pending'
+                cursor.execute("""
+                    INSERT INTO users (user_id, username, first_name, status) 
+                    VALUES (%s, %s, %s, %s)
+                """, (user_id, username, first_name, initial_status))
+                conn.commit()
+                return initial_status
+            else:
+                cursor.execute("UPDATE users SET username = %s, first_name = %s WHERE user_id = %s", (username, first_name, user_id))
+                conn.commit()
+                return user[3]
+
+def set_user_status(user_id, status):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET status = %s WHERE user_id = %s", (status, user_id))
+        conn.commit()
+
+def increment_prompts(user_id):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET prompts_count = prompts_count + 1 WHERE user_id = %s RETURNING prompts_count", (user_id,))
+            updated_count = cursor.fetchone()[0]
+        conn.commit()
+        return updated_count
+
+def add_warning(user_id):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET warnings = warnings + 1 WHERE user_id = %s", (user_id,))
+            cursor.execute("SELECT warnings FROM users WHERE user_id = %s", (user_id,))
+            res = cursor.fetchone()
+        conn.commit()
+        return res[0] if res else 0
+
+def get_all_users():
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT user_id, username, first_name, status, prompts_count, warnings FROM users")
+            return cursor.fetchall()
+
+def set_user_mode(user_id, mode):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("UPDATE users SET current_mode = %s WHERE user_id = %s", (mode, user_id))
+        conn.commit()
+
+def get_user_mode(user_id):
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT current_mode FROM users WHERE user_id = %s", (user_id,))
+            res = cursor.fetchone()
+            return res[0] if (res and res[0]) else 'chat'
+
+def get_memory(chat_id):
+    if chat_id not in USER_MEMORY:
+        USER_MEMORY[chat_id] = []
+    return USER_MEMORY[chat_id]
+
+async def prepare_image_payload(photo_array, caption_text):
+    file_obj = await photo_array[-1].get_file()
+    img_bytearray = await file_obj.download_as_bytearray()
+    b64_data = base64.b64encode(img_bytearray).decode('utf-8')
+    text_prompt = caption_text if caption_text else "Please thoroughly inspect and read this screenshot/image. If it's an error, debug it. If it has code, transcribe/fix it. Provide full details."
+    return [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64_data}}, {"type": "text", "text": text_prompt}]
+
+async def send_and_pin_guide(bot, chat_id):
+    try:
+        sent_msg = await bot.send_message(chat_id=chat_id, text=GUIDE_PIN_TEXT, parse_mode=ParseMode.MARKDOWN)
+        await bot.pin_chat_message(chat_id=chat_id, message_id=sent_msg.message_id, disable_notification=False)
+    except Exception as e:
+        logging.warning(f"Could not pin message for {chat_id}: {e}")
+
+# ================= UI & ACCESS CONTROL =================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+    status = upsert_user(user.id, user.username, user.first_name)
+    USER_MEMORY[chat_id] = []
+
+    if status in ['approved', 'trial']:
+        mode_text = "VIP Access (Unlimited)" if status == 'approved' else f"Free Trial Mode ({TRIAL_PROMPTS_LIMIT} Prompts)"
+        welcome_text = (
+            f"🤖 *Opus 4.6 Super-Bot Active! Welcome {user.first_name}*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📌 Status: *{mode_text}*\n\n"
+            "Tu text prompts, complex coding, aur *Screenshots/Images* bhej kar analysis karwa sakta hai.\n\n"
+            "💡 *Features:*\n"
+            "• `/chat` - Casual Assistant Mode\n"
+            "• `/code` - Pro Dev Engine (Auto-files & zero fluff)\n"
+            "• `/new` - Clear memory"
+        )
+        keyboard = [
+            [InlineKeyboardButton("🧹 Clear Memory", callback_data="clear_mem"), InlineKeyboardButton("📖 Help Menu", callback_data="show_help")]
+        ]
+        await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
+    elif status == 'banned':
+        await update.message.reply_text("⛔ *Access Banned:* Admin ne tumhara access revoke kar diya hai.", parse_mode=ParseMode.MARKDOWN)
+    else:
+        locked_text = (
+            f"🔒 *Access Restricted: Private AI Bot*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Yeh bot private Opus 4.6 engine par run hota hai. Iske features use karne ke liye admin approval zaroori hai.\n\n"
+            "✨ *Bot Capabilities:*\n"
+            "• Advanced Full-Stack Coding & Architecture\n"
+            "• Multimodal Vision (Screenshots & Code Debugging)\n"
+            "• Smart Auto File Naming & Delivery\n"
+            "• Dual Modes (Chat vs Code Engine)\n"
+            "• ADMIN SUPPORT"
+        )
+        keyboard = [
+            [InlineKeyboardButton("📩 Request Access", callback_data="req_access")],
+            [InlineKeyboardButton("💬 Contact Support", url="[https://t.me/CLAUDASUPPORTBOT](https://t.me/CLAUDASUPPORTBOT)")]
+        ]
+        await update.message.reply_text(locked_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def new_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    USER_MEMORY[chat_id] = [] 
+    await update.message.reply_text("🧹 *Memory Cleared!* Purani baatein bhula di gayi hain. Naya sawal poocho." + SHOUTOUT, parse_mode=ParseMode.MARKDOWN)
+
+async def switch_to_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    set_user_mode(user_id, "chat")
+    USER_MEMORY[update.effective_chat.id] = []
+    await update.message.reply_text(
+        "💬 *Switched to Chat Mode!*\n\n"
+        "Ab tum normal baatein, concepts, ya sawal pooch sakte ho bina kisi strict formatting ke.\n"
+        "Coding projects ke liye `/code` use karein." + SHOUTOUT,
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def switch_to_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    set_user_mode(user_id, "code")
+    USER_MEMORY[update.effective_chat.id] = []
+    await update.message.reply_text(
+        "⚡ *Switched to Code Mode!*\n\n"
+        "🚀 *Developer Engine Active:*\n"
+        "• Automatic File Generation & Smart Naming\n"
+        "• Zero Fluff (Direct complete code)\n"
+        "• Token Consumption Display\n"
+        "• No time limits (Max wait)\n\n"
+        "Wapas chat karne ke liye `/chat` type karein." + SHOUTOUT,
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = update.effective_user
+    data = query.data
+    await query.answer()
+
+    if data == "clear_mem":
+        USER_MEMORY[user.id] = []
+        await query.message.reply_text("🧹 *Memory Cleared!* Purana context delete ho gaya." + SHOUTOUT, parse_mode=ParseMode.MARKDOWN)
+    elif data == "show_help":
+        help_text = "🛠️ *Available Commands*\n━━━━━━━━━━━━━━━━━━━━\n🔸 `/start` - Menu\n🔸 `/chat` - Chat Mode\n🔸 `/code` - Dev Engine Mode\n🔸 `/new` - Clear memory"
+        await query.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    elif data == "req_access":
+        set_user_status(user.id, "pending")
+        await query.edit_message_text("⏳ *Access Request Sent!*\n\nAdmin ke paas request dispatch ho gayi hai. Approve hote hi alert aayega.", parse_mode=ParseMode.MARKDOWN)
+        admin_keyboard = [
+            [InlineKeyboardButton("✅ Full Access", callback_data=f"adm_accept_{user.id}"), InlineKeyboardButton(f"⏳ Trial ({TRIAL_PROMPTS_LIMIT})", callback_data=f"adm_trial_{user.id}")],
+            [InlineKeyboardButton("❌ Reject", callback_data=f"adm_reject_{user.id}")]
+        ]
+        admin_alert = f"🔔 *New Access Request Received!*\n━━━━━━━━━━━━━━━━━━━━\n👤 Name: {user.first_name}\n🏷️ Username: @{user.username if user.username else 'None'}\n🆔 User ID: `{user.id}`"
+        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(admin_keyboard))
+
+    elif data.startswith("adm_accept_"):
+        target_uid = int(data.split("_")[2])
+        set_user_status(target_uid, "approved")
+        await query.edit_message_text(f"✅ User `{target_uid}` ko FULL VIP access de diya gaya.", parse_mode=ParseMode.MARKDOWN)
+        try:
+            await context.bot.send_message(chat_id=target_uid, text="🎉 *Access Granted!* \nAdmin ne tumhara VIP access approve kar diya hai. Ab bot use karo! /start", parse_mode=ParseMode.MARKDOWN)
+            await send_and_pin_guide(context.bot, target_uid)
+        except Exception: pass
+
+    elif data.startswith("adm_trial_"):
+        target_uid = int(data.split("_")[2])
+        set_user_status(target_uid, "trial")
+        await query.edit_message_text(f"⏳ User `{target_uid}` ko {TRIAL_PROMPTS_LIMIT} Prompts ka TRIAL access diya gaya.", parse_mode=ParseMode.MARKDOWN)
+        try:
+            await context.bot.send_message(chat_id=target_uid, text=f"🎁 *Free Trial Activated!*\n\nAdmin ne tumhe *{TRIAL_PROMPTS_LIMIT} prompts* ka free trial access diya hai bot test karne ke liye. /start par click karke shuru karo!", parse_mode=ParseMode.MARKDOWN)
+            await send_and_pin_guide(context.bot, target_uid)
+        except Exception: pass
+
+    elif data.startswith("adm_reject_"):
+        target_uid = int(data.split("_")[2])
+        set_user_status(target_uid, "rejected")
+        await query.edit_message_text(f"❌ User `{target_uid}` ki request reject kar di gayi.", parse_mode=ParseMode.MARKDOWN)
+        try:
+            await context.bot.send_message(chat_id=target_uid, text="❌ *Access Request Denied.* Admin ne access reject kar diya hai.", parse_mode=ParseMode.MARKDOWN)
+        except Exception: pass
+
+# ================= MANUAL ADMIN COMMANDS =================
+async def manual_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return
+    target_uid = get_target_uid(context.args[0])
+    if not target_uid: return
+    set_user_status(target_uid, "approved")
+    await update.message.reply_text(f"✅ User `{context.args[0]}` ko manual FULL VIP access de diya gaya.")
+    try: await context.bot.send_message(chat_id=target_uid, text="🎉 *Access Granted!* \nAdmin ne tumhara VIP access approve kar diya hai. Ab bot use karo! /start", parse_mode=ParseMode.MARKDOWN)
+    except Exception: pass
+
+async def manual_trial(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return
+    target_uid = get_target_uid(context.args[0])
+    if not target_uid: return
+    set_user_status(target_uid, "trial")
+    await update.message.reply_text(f"⏳ User `{context.args[0]}` ko manual TRIAL access de diya gaya.")
+    try: await context.bot.send_message(chat_id=target_uid, text=f"🎁 *Free Trial Activated!*\n\nAdmin ne tumhe *{TRIAL_PROMPTS_LIMIT} prompts* ka free trial access diya hai.", parse_mode=ParseMode.MARKDOWN)
+    except Exception: pass
+
+async def manual_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return
+    target_uid = get_target_uid(context.args[0])
+    if not target_uid: return
+    set_user_status(target_uid, "pending")
+    await update.message.reply_text(f"✅ User `{context.args[0]}` ka access chup-chaap remove kar diya gaya hai.")
+
+async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    users = get_all_users()
+    uptime = str(timedelta(seconds=int(time.time() - BOT_START_TIME)))
+    total_prompts = sum([u[4] for u in users]) if users else 0
+    dashboard = (
+        "👑 *Boss Admin Dashboard*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"👥 *Total Registered:* `{len(users)}`\n"
+        f"🔥 *Total Prompts Processed:* `{total_prompts}`\n"
+        f"⏱️ *Uptime:* `{uptime}`\n\n"
+        "🛠️ *Quick Controls:*\n"
+        "• `/users` - List users\n"
+        "• `/accept`, `/trial`, `/reject`\n"
+        "• `/ban`, `/unban`, `/warn`, `/broadcast`"
+    )
+    await update.message.reply_text(dashboard, parse_mode=ParseMode.MARKDOWN)
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        users = get_all_users()
+        if not users: return await update.message.reply_text("Koi users database me nahi hain.")
+        user_lines = []
+        status_icons = {"approved": "🟢", "trial": "⏳", "pending": "🟡", "rejected": "⚪", "banned": "🔴"}
+        for row in users:
+            uid = row[0]
+            username = row[1] if row[1] else "NoUser"
+            fname = row[2] if row[2] else "User"
+            status = row[3] if len(row) > 3 else "pending"
+            prompts = row[4] if len(row) > 4 else 0
+            warns = row[5] if len(row) > 5 else 0
+            clean_name = fname.replace("_", " ").replace("*", " ").replace("`", "")[:10]
+            clean_uname = username.replace("_", " ")
+            icon = status_icons.get(status, "⚪")
+            user_lines.append(f"{icon} `{uid}` | {clean_name} (@{clean_uname}) | P: {prompts} | W: {warns} [{status}]")
+        msg = "📋 *User Database:*\n━━━━━━━━━━━━━━━━━━━━\n" + "\n".join(user_lines[:30])
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Error loading users: {str(e)}")
+
+async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return
+    target_uid = get_target_uid(context.args[0])
+    if not target_uid: return
+    set_user_status(target_uid, "banned")
+    await update.message.reply_text(f"🔴 User `{context.args[0]}` banned.")
+
+async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return
+    target_uid = get_target_uid(context.args[0])
+    if not target_uid: return
+    set_user_status(target_uid, "approved")
+    await update.message.reply_text(f"🟢 User `{context.args[0]}` restored.")
+
+async def warn_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return
+    target_uid = get_target_uid(context.args[0])
+    if not target_uid: return
+    count = add_warning(target_uid)
+    if count >= 3:
+        set_user_status(target_uid, "banned")
+        await update.message.reply_text(f"🔴 User `{context.args[0]}` auto-banned (3 warnings).")
+    else:
+        await update.message.reply_text(f"⚠️ User `{context.args[0]}` warned ({count}/3).")
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    msg = " ".join(context.args)
+    if not msg: return
+    users = get_all_users()
+    count = 0
+    for row in users:
+        uid, status = row[0], row[3]
+        if status in ["approved", "trial"]:
+            try:
+                await context.bot.send_message(chat_id=uid, text=f"📢 *Announcement:*\n━━━━━━━━━━━━━━━━━━━━\n{msg}", parse_mode=ParseMode.MARKDOWN)
+                count += 1
+            except Exception: pass
+    await update.message.reply_text(f"✅ Broadcast delivered to {count} users.")
+
+
+# ================= CORE ENGINE (DUAL MODE + BATTLE-TESTED TIMEOUT + SMART FILES) =================
+async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    user_data = get_user(user.id)
+    if not user_data or user_data[3] not in ["approved", "trial"]:
+        await update.message.reply_text("🔒 Bot access locked hai. Access paane ke liye `/start` par click karke request send karein.")
+        return
+
+    current_status = user_data[3]
+    user_prompts = user_data[5]
+    if current_status == "trial" and user_prompts >= TRIAL_PROMPTS_LIMIT:
+        set_user_status(user.id, "pending")
+        await update.message.reply_text(
+            f"⌛ *Free Trial Expired!*\n\nTumhare *{TRIAL_PROMPTS_LIMIT} free prompts* khatam ho chuke hain.\nFull access lene ke liye support par sampark karein: @CLAUDASUPPORTBOT",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    is_photo = bool(update.message.photo)
+    user_text = update.message.caption if is_photo else update.message.text
+    if not is_photo and not user_text: return
+
+    new_count = increment_prompts(user.id)
+
+    trial_notice = ""
+    if current_status == "trial":
+        remaining = max(0, TRIAL_PROMPTS_LIMIT - new_count)
+        trial_notice = f"\n`[Trial: {remaining} prompts left]`"
+
+    # Fetch User Mode
+    user_mode = get_user_mode(user.id)
+    
+    if user_mode == "chat":
+        system_instruction = CHAT_PROMPT
+        timeout_val = 600.0  # 10 minutes limit for chat
+        loading_text = "💭 *Opus 4.6 is thinking...*"
+    else:
+        system_instruction = CODE_PROMPT
+        timeout_val = None   # No limit for max project compile wait
+        loading_text = "⚙️ *Code Engine is building...* \n_(Zero fluff, pure code. Large projects may take time.)_"
+
+    loading_msg = await update.message.reply_text(loading_text, parse_mode=ParseMode.MARKDOWN)
+    await context.bot.send_chat_action(chat_id=chat_id, action='typing')
+    start_time = time.time()
+
+    try:
+        if is_photo:
+            user_content = await prepare_image_payload(update.message.photo, user_text)
+        else:
+            user_content = user_text
+
+        history = get_memory(chat_id)
+        history.append({"role": "user", "content": user_content})
+        if len(history) > MAX_HISTORY: history = history[-MAX_HISTORY:]
+
+        # ===== BATTLE-TESTED API CALL (Connection Crash Fixed) =====
+        try:
+            api_task = ai_client.messages.create(
+                model=MODEL_NAME,
+                max_tokens=4000,
+                system=system_instruction,
+                messages=history
+                # No timeout parameter passed here to prevent httpx dropping the connection
+            )
+            response = await asyncio.wait_for(api_task, timeout=timeout_val)
+            
+        except asyncio.TimeoutError:
+            err = "❌ *Timeout Error:* Noah API ka server hang ho gaya hai. Kripya thodi der baad prompt bhejein." + SHOUTOUT
+            await loading_msg.edit_text(err, parse_mode=ParseMode.MARKDOWN)
+            if history and history[-1]["role"] == "user": history.pop()
+            return 
+        except anthropic.APIStatusError as e:
+            error_str = str(e)
+            if "529" in error_str or "overloaded_error" in error_str:
+                err = "⚠️ *Server Overloaded (529):* Noah API backend currently busy hai. Kripya 2-3 minute baad try karein." + SHOUTOUT
+            else:
+                err = f"❌ *API Error:* `{e.status_code}` - Request failed." + SHOUTOUT
+            await loading_msg.edit_text(err, parse_mode=ParseMode.MARKDOWN)
+            if history and history[-1]["role"] == "user": history.pop()
+            return
+        except Exception as e:
+            err = f"❌ *Connection/System Error:* `{str(e)}`" + SHOUTOUT
+            await loading_msg.edit_text(err, parse_mode=ParseMode.MARKDOWN)
+            if history and history[-1]["role"] == "user": history.pop()
+            return
+        # ================================
+
+        ai_reply = response.content[0].text
+        history.append({"role": "assistant", "content": ai_reply})
+        elapsed = round(time.time() - start_time, 1)
+
+        # Tokens Details
+        try:
+            in_tokens = response.usage.input_tokens
+            out_tokens = response.usage.output_tokens
+            total_tokens = in_tokens + out_tokens
+        except:
+            in_tokens = out_tokens = total_tokens = 0
+
+        # ===== SUPER SMART FILE EXTRACTION =====
+       # ===== SUPER SMART FILE EXTRACTION (Fixed Incomplete Blocks) =====
+        if user_mode == "code":
+            # Naya Regex: (?:```|\Z) ka matlab hai ya toh closing ``` dhoondo, ya End-of-Message tak utha lo
+            code_blocks = re.findall(r"(```([a-zA-Z0-9+#_\s]*)\r?\n(.*?)(?:```|\Z))", ai_reply, re.DOTALL)
+            
+            if code_blocks:
+                counter = 1
+                for full_match, lang_info, code in code_blocks:
+                    # Bhasha nikaalne ka try karo (agar empty hua toh koi baat nahi)
+                    lang = lang_info.strip().split()[0].lower() if lang_info.strip() else ""
+                    
+                    # Pehli line se actual File Name dhundho
+                    first_line = code.strip().split('\n')[0]
+                    name_match = re.search(r'([a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9]+)', first_line)
+                    
+                    file_name = ""
+                    ext = ""
+                    if name_match:
+                        file_name = name_match.group(1)
+                        ext = file_name.split('.')[-1].lower()
+                    else:
+                        ext = "py" if lang == "python" else ("js" if lang == "javascript" else ("html" if lang == "html" else lang))
+                        if not ext: ext = "txt"
+                        file_name = f"script_{counter}.{ext}"
+                    
+                    # SKIP LOGIC (Terminal commands aur random text ko file nahi banayega)
+                    if ext in ["bash", "sh", "shell"]: 
+                        continue
+                    if len(code.strip()) < 300 and not name_match: 
+                        continue
+                    if ext in ["txt", "text", "plaintext"] and not name_match: 
+                        continue
+                    
+                    # Legitimate code block hai! File banao!
+                    try:
+                        vfile = io.BytesIO(code.encode('utf-8'))
+                        vfile.name = file_name
+                        await context.bot.send_document(chat_id=chat_id, document=vfile, caption=f"📁 `{file_name}` Ready!")
+                        counter += 1
+                        
+                        # PERFECT REPLACE: Chat se raw text ekdum clean!
+                        ai_reply = ai_reply.replace(full_match, f"\n*[ 📁 `{file_name}` upar attach kar di gayi hai ]*\n")
+                    except Exception as file_err:
+                        logging.error(f"File upload failed: {file_err}")
+
+            meta_info = f"\n\n`[⏱️ {elapsed}s | 🪙 Tokens: In {in_tokens} + Out {out_tokens} = {total_tokens}]`"
+        else:
+            meta_info = f"\n\n`[⏱️ {elapsed}s]`"
+        # =================================================
+
+        final_msg = ai_reply + meta_info + trial_notice + SHOUTOUT
+        
+        # Safe chunking & sending
+        if len(final_msg) > 4000:
+            chunks = [final_msg[i:i+3900] for i in range(0, len(final_msg), 3900)]
+            await loading_msg.edit_text(chunks[0] + "...")
+            for chunk in chunks[1:]:
+                await context.bot.send_message(chat_id=chat_id, text=chunk)
+        else:
+            try:
+                await loading_msg.edit_text(final_msg, parse_mode=ParseMode.MARKDOWN)
+            except Exception:
+                await loading_msg.edit_text(final_msg)
+
+    except Exception as e:
+        err = f"❌ *System Error:* `{str(e)}`" + SHOUTOUT
+        try:
+            await loading_msg.edit_text(err, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            pass 
+        if history and history[-1]["role"] == "user": history.pop()
+
+# ================= SYSTEM BOOT =================
+def main():
+    threading.Thread(target=run_web_server, daemon=True).start()
+    init_db()
+
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("new", new_session))
+    app.add_handler(CommandHandler("chat", switch_to_chat))
+    app.add_handler(CommandHandler("code", switch_to_code))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    
+    app.add_handler(CommandHandler("accept", manual_accept))
+    app.add_handler(CommandHandler("trial", manual_trial))
+    app.add_handler(CommandHandler("reject", manual_reject))
+    
+    app.add_handler(CommandHandler("admin", admin_dashboard))
+    app.add_handler(CommandHandler("users", list_users))
+    app.add_handler(CommandHandler("ban", ban_user))
+    app.add_handler(CommandHandler("unban", unban_user))
+    app.add_handler(CommandHandler("warn", warn_user))
+    app.add_handler(CommandHandler("broadcast", broadcast))
+    
+    app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & (~filters.COMMAND), chat_handler))
+
+    print("🚀 God-Mode Opus 4.6 Bot + Render Server + Aiven PostgreSQL is running!")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
