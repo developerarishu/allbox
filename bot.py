@@ -1,37 +1,3 @@
-"""
-🤖 Opus 4.6 Super-Bot — VPS Edition
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• SQLite (no external DB needed)
-• No Flask / no Render dependency  
-• Pure VPS ready (systemd friendly)
-
-VPS Setup:
-  1. pip install python-telegram-bot anthropic
-  2. python bot.py
-
-Systemd (production):
-  sudo nano /etc/systemd/system/opusbot.service
-
-  [Unit]
-  Description=Opus 4.6 Telegram Bot
-  After=network-online.target
-
-  [Service]
-  Type=simple
-  User=YOUR_USER
-  WorkingDirectory=/path/to/bot
-  ExecStart=/usr/bin/python3 /path/to/bot/bot.py
-  Restart=always
-  RestartSec=5
-
-  [Install]
-  WantedBy=multi-user.target
-
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now opusbot
-  sudo journalctl -u opusbot -f     # view logs
-"""
-
 import logging
 import time
 import io
@@ -53,8 +19,8 @@ from telegram.ext import (
 import anthropic
 
 # ================= CONFIGURATION =================
-TELEGRAM_BOT_TOKEN = "8859397124:AAFe4MseJmMnQIjfwAizumFDsz5nlpq-fXg"
-NOAH_API_KEY       = "noah_sk_VzwyWpBbxDkUZYCEyaRdmNVEIQ1rQUPsUc5Yykzbfvg"
+TELEGRAM_BOT_TOKEN = "8293449660:AAGrOC3Z_QOm4GMC8QX2gBNBl-dLkxaQKls"
+NOAH_API_KEY       = "noah_sk_0xyCCoxRAK7TAd3c6xGuu2MheWYn4GEtFpFfSsxGk8k"
 BASE_URL           = "https://noah.2bd.net"
 MODEL_NAME         = "deepseek-v4"
 ADMIN_ID           = 8842807101
@@ -125,26 +91,14 @@ CODE_PROMPT = (
     "5. MANDATORY FILE NAMING: The first line inside EVERY code block MUST be the exact target filename written as a comment (e.g., `<!-- index.html -->`, `// script.js`, `# main.py`)."
 )
 
-# Language → extension mapping for smart file naming
 LANG_TO_EXT = {
-    'python': 'py', 'py': 'py',
-    'javascript': 'js', 'js': 'js', 'node': 'js',
-    'typescript': 'ts', 'ts': 'ts',
-    'html': 'html', 'htm': 'html',
-    'css': 'css',
-    'json': 'json', 'yaml': 'yml', 'yml': 'yml',
-    'sql': 'sql',
-    'java': 'java',
-    'cpp': 'cpp', 'c++': 'cpp', 'c': 'c',
-    'csharp': 'cs', 'cs': 'cs', 'c#': 'cs',
-    'php': 'php',
-    'ruby': 'rb', 'rb': 'rb',
-    'go': 'go', 'golang': 'go',
-    'rust': 'rs', 'rs': 'rs',
-    'kotlin': 'kt', 'kt': 'kt',
-    'swift': 'swift',
-    'xml': 'xml',
-    'markdown': 'md', 'md': 'md',
+    'python': 'py', 'py': 'py', 'javascript': 'js', 'js': 'js', 'node': 'js',
+    'typescript': 'ts', 'ts': 'ts', 'html': 'html', 'htm': 'html', 'css': 'css',
+    'json': 'json', 'yaml': 'yml', 'yml': 'yml', 'sql': 'sql', 'java': 'java',
+    'cpp': 'cpp', 'c++': 'cpp', 'c': 'c', 'csharp': 'cs', 'cs': 'cs', 'c#': 'cs',
+    'php': 'php', 'ruby': 'rb', 'rb': 'rb', 'go': 'go', 'golang': 'go',
+    'rust': 'rs', 'rs': 'rs', 'kotlin': 'kt', 'kt': 'kt', 'swift': 'swift',
+    'xml': 'xml', 'markdown': 'md', 'md': 'md',
 }
 SKIP_LANGS = {'bash', 'sh', 'shell', 'zsh', 'powershell', 'ps1', 'cmd', 'bat'}
 
@@ -307,7 +261,6 @@ async def send_and_pin_guide(bot, chat_id):
         logger.warning(f"Pin failed for {chat_id}: {e}")
 
 def check_cooldown(user_id):
-    """Returns remaining seconds if in cooldown, else 0."""
     now = time.time()
     last = USER_COOLDOWN.get(user_id, 0)
     elapsed = now - last
@@ -317,7 +270,6 @@ def check_cooldown(user_id):
     return 0
 
 async def api_call_with_retry(coro_factory, timeout_val):
-    """Retry API calls up to MAX_RETRIES times with exponential backoff."""
     last_err = None
     for attempt in range(MAX_RETRIES):
         try:
@@ -355,21 +307,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/chat` - Casual Assistant Mode\n"
             "• `/code` - Pro Dev Engine (Auto-files & zero fluff)\n"
             "• `/new` - Clear memory\n"
-            "• `/stats` - Your stats\n"
-            "• `/mode` - Current mode"
+            "• `/stats` - Your stats"
         )
         keyboard = [[
             InlineKeyboardButton("🧹 Clear Memory", callback_data="clear_mem"),
             InlineKeyboardButton("📖 Help Menu",   callback_data="show_help"),
         ]]
         await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
+        # Auto-pin guide for approved users
+        await send_and_pin_guide(context.bot, chat_id)
+        
     elif status == 'banned':
         await update.message.reply_text("⛔ *Access Banned:* Admin ne tumhara access revoke kar diya hai.", parse_mode=ParseMode.MARKDOWN)
     else:
         locked_text = (
             "🔒 *Access Restricted: Private AI Bot*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Yeh bot private Opus 4.6 engine par run hota hai. Iske features use karne ke liye admin approval zaroori hai.\n\n"
+            "Yeh bot private engine par run hota hai. Iske features use karne ke liye admin approval zaroori hai.\n\n"
             "✨ *Bot Capabilities:*\n"
             "• Advanced Full-Stack Coding & Architecture\n"
             "• Multimodal Vision (Screenshots & Code Debugging)\n"
@@ -378,7 +332,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         keyboard = [[
             InlineKeyboardButton("📩 Request Access", callback_data="req_access"),
-            InlineKeyboardButton("💬 Contact Support", url="https://t.me/CLAUDASUPPORTBOT"),
+            InlineKeyboardButton("💬 Contact Support", url="https://t.me/ultronop_robot"),
         ]]
         await update.message.reply_text(locked_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -391,7 +345,7 @@ async def switch_to_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     set_user_mode(user_id, "chat")
     USER_MEMORY[update.effective_chat.id] = []
     await update.message.reply_text(
-        "💬 *Switched to Chat Mode!*\n\nAb tum normal baatein, concepts, ya sawal pooch sakte ho bina kisi strict formatting ke.\nCoding projects ke liye `/code` use karein." + SHOUTOUT,
+        "💬 *Switched to Chat Mode!*\n\nAb tum normal baatein, concepts, ya sawal pooch sakte ho.\nCoding projects ke liye `/code` use karein." + SHOUTOUT,
         parse_mode=ParseMode.MARKDOWN,
     )
 
@@ -404,26 +358,23 @@ async def switch_to_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🚀 *Developer Engine Active:*\n"
         "• Automatic File Generation & Smart Naming\n"
         "• Zero Fluff (Direct complete code)\n"
-        "• Token Consumption Display\n"
         "• No time limits (Max wait)\n\n"
         "Wapas chat karne ke liye `/chat` type karein." + SHOUTOUT,
         parse_mode=ParseMode.MARKDOWN,
     )
 
+async def manual_guide(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_and_pin_guide(context.bot, update.effective_chat.id)
+
 async def show_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = get_user_mode(update.effective_user.id)
     icon = "💬" if mode == "chat" else "⚡"
-    await update.message.reply_text(
-        f"{icon} *Current Mode:* `{mode.upper()}`\n\nSwitch karne ke liye `/chat` ya `/code` use karo.",
-        parse_mode=ParseMode.MARKDOWN,
-    )
+    await update.message.reply_text(f"{icon} *Current Mode:* `{mode.upper()}`\n\nSwitch: `/chat` ya `/code`", parse_mode=ParseMode.MARKDOWN)
 
 async def user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     data = get_user(user.id)
-    if not data:
-        await update.message.reply_text("Pehle /start karo bhai.")
-        return
+    if not data: return await update.message.reply_text("Pehle /start karo bhai.")
     status, warnings, prompts = data[3], data[4], data[5]
     mode = get_user_mode(user.id)
     icons = {"approved": "🟢 VIP", "trial": "⏳ Trial", "pending": "🟡 Pending", "rejected": "⚪ Rejected", "banned": "🔴 Banned"}
@@ -431,7 +382,6 @@ async def user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 *Your Stats*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 Name: `{user.first_name}`\n"
-        f"🆔 ID: `{user.id}`\n"
         f"🎫 Status: *{icons.get(status, status)}*\n"
         f"💬 Total Prompts: `{prompts}`\n"
         f"⚙️ Mode: `{mode.upper()}`\n"
@@ -450,8 +400,8 @@ async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔸 `/code`   – Dev Engine Mode\n"
         "🔸 `/mode`   – Show current mode\n"
         "🔸 `/stats`  – Your stats\n"
-        "🔸 `/new`    – Clear memory\n"
-        "🔸 `/help`   – This menu"
+        "🔸 `/guide`  – Pin the instruction guide\n"
+        "🔸 `/new`    – Clear memory"
     )
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
@@ -463,15 +413,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "clear_mem":
         USER_MEMORY[user.id] = []
-        await query.message.reply_text("🧹 *Memory Cleared!* Purana context delete ho gaya." + SHOUTOUT, parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text("🧹 *Memory Cleared!*" + SHOUTOUT, parse_mode=ParseMode.MARKDOWN)
 
     elif data == "show_help":
-        help_text = "🛠️ *Available Commands*\n━━━━━━━━━━━━━━━━━━━━\n🔸 `/start` – Menu\n🔸 `/chat` – Chat Mode\n🔸 `/code` – Dev Engine\n🔸 `/mode` – Show mode\n🔸 `/stats` – Your stats\n🔸 `/new` – Clear memory"
+        help_text = "🛠️ *Commands*\n🔸 `/chat` – Chat\n🔸 `/code` – Dev Engine\n🔸 `/guide` – Pin rules\n🔸 `/stats` – Stats\n🔸 `/new` – Clear memory"
         await query.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
     elif data == "req_access":
         set_user_status(user.id, "pending")
-        await query.edit_message_text("⏳ *Access Request Sent!*\n\nAdmin ke paas request dispatch ho gayi hai. Approve hote hi alert aayega.", parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text("⏳ *Access Request Sent!*\n\nAdmin ko request chali gayi hai. Approve hote hi alert aayega.", parse_mode=ParseMode.MARKDOWN)
         admin_keyboard = [[
             InlineKeyboardButton("✅ Full Access", callback_data=f"adm_accept_{user.id}"),
             InlineKeyboardButton(f"⏳ Trial ({TRIAL_PROMPTS_LIMIT})", callback_data=f"adm_trial_{user.id}"),
@@ -479,41 +429,44 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("❌ Reject", callback_data=f"adm_reject_{user.id}"),
         ]]
         admin_alert = (
-            "🔔 *New Access Request Received!*\n"
+            "🔔 *New Access Request!*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 Name: {user.first_name}\n"
             f"🏷️ Username: @{user.username if user.username else 'None'}\n"
             f"🆔 User ID: `{user.id}`"
         )
-        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(admin_keyboard))
+        try:
+            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(admin_keyboard))
+        except Exception as e:
+            logger.error(f"Failed to send access req to admin: {e}")
 
     elif data.startswith("adm_accept_"):
         target = int(data.split("_")[2])
         set_user_status(target, "approved")
         await query.edit_message_text(f"✅ User `{target}` ko FULL VIP access de diya gaya.", parse_mode=ParseMode.MARKDOWN)
         try:
-            await context.bot.send_message(chat_id=target, text="🎉 *Access Granted!* \nAdmin ne tumhara VIP access approve kar diya hai. Ab bot use karo! /start", parse_mode=ParseMode.MARKDOWN)
+            await context.bot.send_message(chat_id=target, text="🎉 *Access Granted!*\nAdmin ne VIP access approve kar diya. /start", parse_mode=ParseMode.MARKDOWN)
             await send_and_pin_guide(context.bot, target)
         except Exception: pass
 
     elif data.startswith("adm_trial_"):
         target = int(data.split("_")[2])
         set_user_status(target, "trial")
-        await query.edit_message_text(f"⏳ User `{target}` ko {TRIAL_PROMPTS_LIMIT} prompts ka TRIAL access diya gaya.", parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text(f"⏳ User `{target}` ko {TRIAL_PROMPTS_LIMIT} prompts TRIAL diya gaya.", parse_mode=ParseMode.MARKDOWN)
         try:
-            await context.bot.send_message(chat_id=target, text=f"🎁 *Free Trial Activated!*\n\nAdmin ne tumhe *{TRIAL_PROMPTS_LIMIT} prompts* ka free trial access diya hai. /start par click karke shuru karo!", parse_mode=ParseMode.MARKDOWN)
+            await context.bot.send_message(chat_id=target, text=f"🎁 *Free Trial Activated!*\nAdmin ne tumhe *{TRIAL_PROMPTS_LIMIT} prompts* ka trial diya hai. /start", parse_mode=ParseMode.MARKDOWN)
             await send_and_pin_guide(context.bot, target)
         except Exception: pass
 
     elif data.startswith("adm_reject_"):
         target = int(data.split("_")[2])
         set_user_status(target, "rejected")
-        await query.edit_message_text(f"❌ User `{target}` ki request reject kar di gayi.", parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text(f"❌ User `{target}` reject kar diya gaya.", parse_mode=ParseMode.MARKDOWN)
         try:
-            await context.bot.send_message(chat_id=target, text="❌ *Access Request Denied.* Admin ne access reject kar diya hai.", parse_mode=ParseMode.MARKDOWN)
+            await context.bot.send_message(chat_id=target, text="❌ *Access Denied.* Admin ne access reject kar diya.", parse_mode=ParseMode.MARKDOWN)
         except Exception: pass
 
-# ================= ADMIN MANUAL COMMANDS =================
+# ================= ADMIN COMMANDS =================
 async def _require_admin(update):
     return update.effective_user.id == ADMIN_ID
 
@@ -522,41 +475,34 @@ async def manual_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = get_target_uid(context.args[0])
     if not target: return
     set_user_status(target, "approved")
-    await update.message.reply_text(f"✅ User `{context.args[0]}` ko manual FULL VIP access de diya gaya.")
-    try: await context.bot.send_message(chat_id=target, text="🎉 *Access Granted!* Admin ne VIP access approve kar diya. /start", parse_mode=ParseMode.MARKDOWN)
-    except Exception: pass
+    await update.message.reply_text(f"✅ User `{context.args[0]}` VIP approved.")
 
 async def manual_trial(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update) or not context.args: return
     target = get_target_uid(context.args[0])
     if not target: return
     set_user_status(target, "trial")
-    await update.message.reply_text(f"⏳ User `{context.args[0]}` ko manual TRIAL access de diya gaya.")
-    try: await context.bot.send_message(chat_id=target, text=f"🎁 *Free Trial Activated!* Admin ne *{TRIAL_PROMPTS_LIMIT} prompts* ka trial diya hai.", parse_mode=ParseMode.MARKDOWN)
-    except Exception: pass
+    await update.message.reply_text(f"⏳ User `{context.args[0]}` Trial approved.")
 
 async def manual_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update) or not context.args: return
     target = get_target_uid(context.args[0])
     if not target: return
     set_user_status(target, "pending")
-    await update.message.reply_text(f"✅ User `{context.args[0]}` ka access remove kar diya gaya.")
+    await update.message.reply_text(f"✅ User `{context.args[0]}` access removed.")
 
 async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update): return
     users = get_all_users()
     uptime = str(timedelta(seconds=int(time.time() - BOT_START_TIME)))
     total_prompts = sum([u[4] for u in users]) if users else 0
-    try: db_size = os.path.getsize(DB_PATH) / 1024
-    except: db_size = 0
     dashboard = (
         "👑 *Boss Admin Dashboard*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"👥 *Total Registered:* `{len(users)}`\n"
+        f"👥 *Registered:* `{len(users)}`\n"
         f"🔥 *Total Prompts:* `{total_prompts}`\n"
-        f"⏱️ *Uptime:* `{uptime}`\n"
-        f"💾 *DB Size:* `{db_size:.1f} KB`\n\n"
-        "🛠️ *Quick Controls:*\n"
+        f"⏱️ *Uptime:* `{uptime}`\n\n"
+        "🛠️ *Controls:*\n"
         "• `/users` – List users\n"
         "• `/accept`, `/trial`, `/reject`\n"
         "• `/ban`, `/unban`, `/warn`, `/broadcast`"
@@ -565,49 +511,40 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update): return
-    try:
-        users = get_all_users()
-        if not users:
-            return await update.message.reply_text("Koi users database me nahi hain.")
-        icons = {"approved": "🟢", "trial": "⏳", "pending": "🟡", "rejected": "⚪", "banned": "🔴"}
-        lines = []
-        for row in users:
-            uid, uname, fname = row[0], row[1] or "NoUser", row[2] or "User"
-            status = row[3] if len(row) > 3 else "pending"
-            prompts = row[4] if len(row) > 4 else 0
-            warns = row[5] if len(row) > 5 else 0
-            clean_name = fname.replace("_", " ").replace("*", " ").replace("`", "")[:10]
-            clean_uname = uname.replace("_", " ")
-            lines.append(f"{icons.get(status,'⚪')} `{uid}` | {clean_name} (@{clean_uname}) | P: {prompts} | W: {warns} [{status}]")
-        msg = "📋 *User Database:*\n━━━━━━━━━━━━━━━━━━━━\n" + "\n".join(lines[:30])
-        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        await update.message.reply_text(f"⚠️ Error loading users: {e}")
+    users = get_all_users()
+    if not users: return await update.message.reply_text("No users found.")
+    icons = {"approved": "🟢", "trial": "⏳", "pending": "🟡", "rejected": "⚪", "banned": "🔴"}
+    lines = []
+    for row in users:
+        uid, uname, fname = row[0], row[1] or "NoUser", row[2] or "User"
+        status, prompts, warns = row[3], row[4], row[5]
+        lines.append(f"{icons.get(status,'⚪')} `{uid}` | {fname[:10]} (@{uname}) | P: {prompts} | W: {warns} [{status}]")
+    await update.message.reply_text("📋 *Users:*\n" + "\n".join(lines[:30]), parse_mode=ParseMode.MARKDOWN)
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update) or not context.args: return
     target = get_target_uid(context.args[0])
-    if not target: return
-    set_user_status(target, "banned")
-    await update.message.reply_text(f"🔴 User `{context.args[0]}` banned.")
+    if target:
+        set_user_status(target, "banned")
+        await update.message.reply_text(f"🔴 User `{context.args[0]}` banned.")
 
 async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update) or not context.args: return
     target = get_target_uid(context.args[0])
-    if not target: return
-    set_user_status(target, "approved")
-    await update.message.reply_text(f"🟢 User `{context.args[0]}` restored.")
+    if target:
+        set_user_status(target, "approved")
+        await update.message.reply_text(f"🟢 User `{context.args[0]}` restored.")
 
 async def warn_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update) or not context.args: return
     target = get_target_uid(context.args[0])
-    if not target: return
-    count = add_warning(target)
-    if count >= 3:
-        set_user_status(target, "banned")
-        await update.message.reply_text(f"🔴 User `{context.args[0]}` auto-banned (3 warnings).")
-    else:
-        await update.message.reply_text(f"⚠️ User `{context.args[0]}` warned ({count}/3).")
+    if target:
+        count = add_warning(target)
+        if count >= 3:
+            set_user_status(target, "banned")
+            await update.message.reply_text(f"🔴 User `{context.args[0]}` auto-banned (3 warnings).")
+        else:
+            await update.message.reply_text(f"⚠️ User `{context.args[0]}` warned ({count}/3).")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update): return
@@ -616,13 +553,12 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users = get_all_users()
     count = 0
     for row in users:
-        uid, status = row[0], row[3]
-        if status in ["approved", "trial"]:
+        if row[3] in ["approved", "trial"]:
             try:
-                await context.bot.send_message(chat_id=uid, text=f"📢 *Announcement:*\n━━━━━━━━━━━━━━━━━━━━\n{msg}", parse_mode=ParseMode.MARKDOWN)
+                await context.bot.send_message(chat_id=row[0], text=f"📢 *Announcement:*\n━━━━━━━━━━━━━━━━━━━━\n{msg}", parse_mode=ParseMode.MARKDOWN)
                 count += 1
             except Exception: pass
-    await update.message.reply_text(f"✅ Broadcast delivered to {count} users.")
+    await update.message.reply_text(f"✅ Broadcast sent to {count} users.")
 
 # ================= CORE ENGINE =================
 async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -631,7 +567,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_data = get_user(user.id)
     if not user_data or user_data[3] not in ["approved", "trial"]:
-        await update.message.reply_text("🔒 Bot access locked hai. Access paane ke liye `/start` par click karke request send karein.")
+        await update.message.reply_text("🔒 Bot access locked. `/start` karke request send karein.")
         return
 
     current_status = user_data[3]
@@ -640,12 +576,11 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_status == "trial" and user_prompts >= TRIAL_PROMPTS_LIMIT:
         set_user_status(user.id, "pending")
         await update.message.reply_text(
-            f"⌛ *Free Trial Expired!*\n\nTumhare *{TRIAL_PROMPTS_LIMIT} free prompts* khatam ho chuke hain.\nFull access ke liye sampark karein: @CLAUDASUPPORTBOT",
+            f"⌛ *Trial Expired!*\nTumhare *{TRIAL_PROMPTS_LIMIT} prompts* khatam ho gaye hain.\nSupport: @ultronop_robot",
             parse_mode=ParseMode.MARKDOWN,
         )
         return
 
-    # 🔒 Anti-spam cooldown
     cd = check_cooldown(user.id)
     if cd > 0:
         await update.message.reply_text(f"⏳ Thoda sabar bhai! *{cd}s* baad try karo.")
@@ -665,7 +600,7 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_mode == "chat":
         system_instruction = CHAT_PROMPT
         timeout_val = 600.0
-        loading_text = "💭 *Opus 4.6 is thinking...*"
+        loading_text = "💭 *DeepSeek v4 is thinking...*"
     else:
         system_instruction = CODE_PROMPT
         timeout_val = None
@@ -692,13 +627,13 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 timeout_val,
             )
         except asyncio.TimeoutError:
-            await loading_msg.edit_text("❌ *Timeout Error:* Noah API server hang ho gaya. Thodi der baad try karein." + SHOUTOUT, parse_mode=ParseMode.MARKDOWN)
+            await loading_msg.edit_text("❌ *Timeout Error:* API server hang. Baad me try karein." + SHOUTOUT, parse_mode=ParseMode.MARKDOWN)
             if history and history[-1]["role"] == "user": history.pop()
             return
         except anthropic.APIStatusError as e:
             err_str = str(e)
             if "529" in err_str or "overloaded_error" in err_str:
-                err = "⚠️ *Server Overloaded (529):* Noah API backend busy hai. 2-3 min baad try karein." + SHOUTOUT
+                err = "⚠️ *Server Overloaded (529):* Backend busy hai. 2-3 min baad try karein." + SHOUTOUT
             else:
                 err = f"❌ *API Error:* `{e.status_code}` - Request failed." + SHOUTOUT
             await loading_msg.edit_text(err, parse_mode=ParseMode.MARKDOWN)
@@ -709,7 +644,15 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if history and history[-1]["role"] == "user": history.pop()
             return
 
-        ai_reply = response.content[0].text
+        # 🔥 FIX for 'ThinkingBlock' error
+        ai_reply = ""
+        for block in response.content:
+            if hasattr(block, 'text'):
+                ai_reply += block.text
+                
+        if not ai_reply.strip():
+            ai_reply = "(Model ne koi text generate nahi kiya, sirf thinking blocks the. Thoda alag prompt try karo.)"
+
         history.append({"role": "assistant", "content": ai_reply})
         elapsed = round(time.time() - start_time, 1)
 
@@ -779,11 +722,11 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= LIFECYCLE HOOKS =================
 async def on_startup(application):
-    logger.info("🚀 Bot started. Uptime clock started.")
+    logger.info("🚀 Bot started.")
     try:
         await application.bot.send_message(
             chat_id=ADMIN_ID,
-            text="🚀 *Bot Online!*\nVPS par bot successfully chal raha hai.\n\n`/admin` se dashboard dekho.",
+            text="🚀 *Bot Online!*\nVPS par bot successfully chal raha hai. `/admin` se dashboard dekho.",
             parse_mode=ParseMode.MARKDOWN,
         )
     except Exception as e:
@@ -807,17 +750,16 @@ def main():
         .build()
     )
 
-    # User commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("new",   new_session))
     app.add_handler(CommandHandler("chat",  switch_to_chat))
     app.add_handler(CommandHandler("code",  switch_to_code))
+    app.add_handler(CommandHandler("guide", manual_guide))
     app.add_handler(CommandHandler("mode",  show_mode))
     app.add_handler(CommandHandler("stats", user_stats))
     app.add_handler(CommandHandler("help",  help_menu))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    # Admin commands
     app.add_handler(CommandHandler("accept",    manual_accept))
     app.add_handler(CommandHandler("trial",     manual_trial))
     app.add_handler(CommandHandler("reject",    manual_reject))
@@ -828,10 +770,9 @@ def main():
     app.add_handler(CommandHandler("warn",      warn_user))
     app.add_handler(CommandHandler("broadcast", broadcast))
 
-    # Message handler
     app.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & (~filters.COMMAND), chat_handler))
 
-    logger.info("✅ God-Mode Opus 4.6 Bot is running on VPS (SQLite mode)!")
+    logger.info("✅ God-Mode DeepSeek v4 Bot is running!")
     app.run_polling()
 
 if __name__ == "__main__":
