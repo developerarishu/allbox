@@ -466,28 +466,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=target, text="❌ *Access Denied.* Admin ne access reject kar diya.", parse_mode=ParseMode.MARKDOWN)
         except Exception: pass
 
-# ================= ADMIN COMMANDS =================
+# ================= ADMIN COMMANDS (FIXED) =================
 async def _require_admin(update):
-    return update.effective_user.id == ADMIN_ID
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ *Access Denied:* Yeh command sirf admin ke liye hai.", parse_mode=ParseMode.MARKDOWN)
+        return False
+    return True
 
 async def manual_accept(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _require_admin(update) or not context.args: return
+    if not await _require_admin(update): return
+    if not context.args:
+        return await update.message.reply_text("⚠️ *Usage:* `/accept <user_id_or_username>`", parse_mode=ParseMode.MARKDOWN)
     target = get_target_uid(context.args[0])
-    if not target: return
+    if not target:
+        return await update.message.reply_text(f"❌ User `{context.args[0]}` database me nahi mila.")
     set_user_status(target, "approved")
     await update.message.reply_text(f"✅ User `{context.args[0]}` VIP approved.")
 
 async def manual_trial(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _require_admin(update) or not context.args: return
+    if not await _require_admin(update): return
+    if not context.args:
+        return await update.message.reply_text("⚠️ *Usage:* `/trial <user_id_or_username>`", parse_mode=ParseMode.MARKDOWN)
     target = get_target_uid(context.args[0])
-    if not target: return
+    if not target:
+        return await update.message.reply_text(f"❌ User `{context.args[0]}` database me nahi mila.")
     set_user_status(target, "trial")
     await update.message.reply_text(f"⏳ User `{context.args[0]}` Trial approved.")
 
 async def manual_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _require_admin(update) or not context.args: return
+    if not await _require_admin(update): return
+    if not context.args:
+        return await update.message.reply_text("⚠️ *Usage:* `/reject <user_id_or_username>`", parse_mode=ParseMode.MARKDOWN)
     target = get_target_uid(context.args[0])
-    if not target: return
+    if not target:
+        return await update.message.reply_text(f"❌ User `{context.args[0]}` database me nahi mila.")
     set_user_status(target, "pending")
     await update.message.reply_text(f"✅ User `{context.args[0]}` access removed.")
 
@@ -511,45 +523,63 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update): return
-    users = get_all_users()
-    if not users: return await update.message.reply_text("No users found.")
-    icons = {"approved": "🟢", "trial": "⏳", "pending": "🟡", "rejected": "⚪", "banned": "🔴"}
-    lines = []
-    for row in users:
-        uid, uname, fname = row[0], row[1] or "NoUser", row[2] or "User"
-        status, prompts, warns = row[3], row[4], row[5]
-        lines.append(f"{icons.get(status,'⚪')} `{uid}` | {fname[:10]} (@{uname}) | P: {prompts} | W: {warns} [{status}]")
-    await update.message.reply_text("📋 *Users:*\n" + "\n".join(lines[:30]), parse_mode=ParseMode.MARKDOWN)
+    try:
+        users = get_all_users()
+        if not users: return await update.message.reply_text("Database me koi users nahi hain.")
+        icons = {"approved": "🟢", "trial": "⏳", "pending": "🟡", "rejected": "⚪", "banned": "🔴"}
+        lines = []
+        for row in users:
+            uid, uname, fname = row[0], row[1] or "NoUser", row[2] or "User"
+            status, prompts, warns = row[3], row[4], row[5]
+            
+            # 🚨 MARKDOWN FIX: Remove special chars to prevent Telegram API crash
+            clean_name = re.sub(r'[_*\[\]()~`>#+\-=|{}.!]', '', fname)[:10]
+            clean_uname = re.sub(r'[_*\[\]()~`>#+\-=|{}.!]', '', uname)
+            
+            lines.append(f"{icons.get(status,'⚪')} `{uid}` | {clean_name} (@{clean_uname}) | P: {prompts} | W: {warns} [{status}]")
+        await update.message.reply_text("📋 *Users:*\n" + "\n".join(lines[:30]), parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Error loading users: {str(e)}")
 
 async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _require_admin(update) or not context.args: return
+    if not await _require_admin(update): return
+    if not context.args:
+        return await update.message.reply_text("⚠️ *Usage:* `/ban <user_id_or_username>`", parse_mode=ParseMode.MARKDOWN)
     target = get_target_uid(context.args[0])
-    if target:
-        set_user_status(target, "banned")
-        await update.message.reply_text(f"🔴 User `{context.args[0]}` banned.")
+    if not target:
+        return await update.message.reply_text(f"❌ User `{context.args[0]}` database me nahi mila.")
+    set_user_status(target, "banned")
+    await update.message.reply_text(f"🔴 User `{context.args[0]}` banned.")
 
 async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _require_admin(update) or not context.args: return
+    if not await _require_admin(update): return
+    if not context.args:
+        return await update.message.reply_text("⚠️ *Usage:* `/unban <user_id_or_username>`", parse_mode=ParseMode.MARKDOWN)
     target = get_target_uid(context.args[0])
-    if target:
-        set_user_status(target, "approved")
-        await update.message.reply_text(f"🟢 User `{context.args[0]}` restored.")
+    if not target:
+        return await update.message.reply_text(f"❌ User `{context.args[0]}` database me nahi mila.")
+    set_user_status(target, "approved")
+    await update.message.reply_text(f"🟢 User `{context.args[0]}` restored.")
 
 async def warn_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await _require_admin(update) or not context.args: return
+    if not await _require_admin(update): return
+    if not context.args:
+        return await update.message.reply_text("⚠️ *Usage:* `/warn <user_id_or_username>`", parse_mode=ParseMode.MARKDOWN)
     target = get_target_uid(context.args[0])
-    if target:
-        count = add_warning(target)
-        if count >= 3:
-            set_user_status(target, "banned")
-            await update.message.reply_text(f"🔴 User `{context.args[0]}` auto-banned (3 warnings).")
-        else:
-            await update.message.reply_text(f"⚠️ User `{context.args[0]}` warned ({count}/3).")
+    if not target:
+        return await update.message.reply_text(f"❌ User `{context.args[0]}` database me nahi mila.")
+    count = add_warning(target)
+    if count >= 3:
+        set_user_status(target, "banned")
+        await update.message.reply_text(f"🔴 User `{context.args[0]}` auto-banned (3 warnings).")
+    else:
+        await update.message.reply_text(f"⚠️ User `{context.args[0]}` warned ({count}/3).")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _require_admin(update): return
     msg = " ".join(context.args)
-    if not msg: return
+    if not msg: 
+        return await update.message.reply_text("⚠️ *Usage:* `/broadcast <your message>`", parse_mode=ParseMode.MARKDOWN)
     users = get_all_users()
     count = 0
     for row in users:
@@ -644,7 +674,6 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if history and history[-1]["role"] == "user": history.pop()
             return
 
-        # 🔥 FIX for 'ThinkingBlock' error
         ai_reply = ""
         for block in response.content:
             if hasattr(block, 'text'):
@@ -663,7 +692,6 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             in_tokens = out_tokens = total_tokens = 0
 
-        # ===== SMART FILE EXTRACTION =====
         if user_mode == "code":
             code_blocks = re.findall(r"(```([a-zA-Z0-9+#_\s]*)\r?\n(.*?)(?:```|\Z))", ai_reply, re.DOTALL)
             if code_blocks:
@@ -720,6 +748,16 @@ async def chat_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 'history' in locals() and history and history[-1]["role"] == "user":
             history.pop()
 
+# ================= GLOBAL ERROR HANDLER =================
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a message to the user so they know what went wrong."""
+    logger.error(f"Exception while handling an update: {context.error}", exc_info=context.error)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(f"⚠️ *Internal Error:* `{context.error}`\n\nBhai isko copy karke admin ko bhej do.", parse_mode=ParseMode.MARKDOWN)
+        except:
+            pass
+
 # ================= LIFECYCLE HOOKS =================
 async def on_startup(application):
     logger.info("🚀 Bot started.")
@@ -749,6 +787,9 @@ def main():
         .post_shutdown(on_shutdown)
         .build()
     )
+
+    # Error Handler (Saare errors ab chat me dikhenge)
+    app.add_error_handler(error_handler)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("new",   new_session))
